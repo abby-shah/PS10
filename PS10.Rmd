@@ -1,6 +1,6 @@
 ---
 title: "STAT/MATH 495: Problem Set 10"
-author: "WRITE YOUR NAME(S) HERE"
+author: "Syed Abbas Shah"
 date: "2017-11-28"
 output:
   html_document:
@@ -22,7 +22,7 @@ knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=4.5, message=FALSE, w
 
 Please indicate who you collaborated with on this assignment: 
 
-
+No one
 
 # Setup
 
@@ -36,7 +36,7 @@ test <- read_csv("data/test.csv")
 sample_submission <- read_csv("data/sample_submission.csv")
 
 # Only use 150 observations to train model!
-set.seed(76)
+set.seed(80)
 train <- train %>% 
   mutate(log_price_doc = log(price_doc)) %>% 
   sample_n(150)
@@ -56,10 +56,67 @@ predictor_matrix_test <- model.matrix(model_formula, data = test)[, -1]
 
 # Do work and create submission files:
 
-```{r}
+##LM
 
+First, let's fit the LM Model.
+
+```{r}
+model_lm <- lm(model_formula, data=train)
+
+# 1.a) Extract regression table in tidy format
+model_lm %>% 
+  broom::glance()
+
+#TRAIN ERROR
+model_lm$residuals^2 %>%  
+ mean() %>% 
+  sqrt()
+
+#PREDICTIONS
+y_hat <- predict(model_lm, newdata=test)
+test$log_price_doc<-y_hat
+test$price_doc <- exp(test$log_price_doc)
+sample_submission$price_doc <- test$price_doc
+
+write_excel_csv(sample_submission, "submission1")
 ```
 
+
+
+##LASSO
+
+Now, Let's try the LASSO Model.
+```{r}
+lambda_inputs <- 10^seq(-2, 10, length = 100)
+LASSO_fit <- glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha = 1, lambda = lambda_inputs)
+LASSO_CV <- cv.glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha=1, lambda=lambda_inputs)
+
+# Optimal lambdas
+lambda_star <- LASSO_CV$lambda.min
+lambda_star_1SE <- LASSO_CV$lambda.1se
+
+plot(LASSO_CV)
+abline(v=log(lambda_star), col="red")
+abline(v=log(lambda_star_1SE), col="blue")
+```
+
+```{r}
+y_hattrain <- predict(LASSO_fit, newx=predictor_matrix_train, s=lambda_star_1SE) %>% 
+  as.vector()
+
+#TRAIN error
+(y_hattrain - train$log_price_doc)^2 %>% 
+  mean() %>% 
+  sqrt()
+
+y_hat <- predict(LASSO_fit, newx=predictor_matrix_test, s=lambda_star_1SE) %>% 
+  as.vector()
+hist(y_hat)
+
+
+sample_submission$price_doc<- exp(y_hat)
+write_excel_csv(sample_submission, "submission2")
+```
 
 
 
@@ -72,5 +129,10 @@ in these cells:
 
 Method                | Training Score  | Kaggle Score
 --------------------- | -------------   | -------------
-lm                    |                 |  
-LASSO crossvalidated  |                 |  
+lm                    |     0.1200696   |  4.12045
+LASSO crossvalidated  |     0.5055529   |  0.45162
+
+
+The Kaggle Score for the Lm model is fairly high That's probably because we use very few observations to train our model. Naturally, the training score would be lower than the one computed from the out-of-sample test data on which the model is applied.
+
+The Kaggle Score for the LASSO model with a cross-validated optimal lambda is much lower, indicating that the LASSO model is much better at predicting the test data than the simple lm model.
