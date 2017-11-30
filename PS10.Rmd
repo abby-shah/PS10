@@ -26,17 +26,19 @@ No one
 
 # Setup
 
-```{r}
+```{r Setup, message=FALSE, warning=FALSE}
 library(tidyverse)
 library(broom)
 library(glmnet)
+library(knitr)
+library(MLmetrics)
 
 train <- read_csv("data/train.csv")
 test <- read_csv("data/test.csv")
 sample_submission <- read_csv("data/sample_submission.csv")
 
 # Only use 150 observations to train model!
-set.seed(80)
+set.seed(76)
 train <- train %>% 
   mutate(log_price_doc = log(price_doc)) %>% 
   sample_n(150)
@@ -54,30 +56,28 @@ predictor_matrix_test <- model.matrix(model_formula, data = test)[, -1]
 ```
 
 
-# Do work and create submission files:
+# My Work
 
-##LM
+##LM Model
 
 First, let's fit the LM Model.
 
-```{r}
+```{r LM Model, message=FALSE, warning=FALSE}
 model_lm <- lm(model_formula, data=train)
 
-# 1.a) Extract regression table in tidy format
+#Regression table in tidy format
 model_lm %>% 
   broom::glance()
 
 #TRAIN ERROR
-model_lm$residuals^2 %>%  
- mean() %>% 
-  sqrt()
+y_hat <- predict(model_lm, newdata=train)
+lm_train_rmsle <- MLmetrics::RMSLE(exp(y_hat), train$price_doc)
 
 #PREDICTIONS
 y_hat <- predict(model_lm, newdata=test)
 test$log_price_doc<-y_hat
 test$price_doc <- exp(test$log_price_doc)
 sample_submission$price_doc <- test$price_doc
-
 write_excel_csv(sample_submission, "submission1")
 ```
 
@@ -86,7 +86,7 @@ write_excel_csv(sample_submission, "submission1")
 ##LASSO
 
 Now, Let's try the LASSO Model.
-```{r}
+```{r LASSO, message=FALSE, warning=FALSE}
 lambda_inputs <- 10^seq(-2, 10, length = 100)
 LASSO_fit <- glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha = 1, lambda = lambda_inputs)
 LASSO_CV <- cv.glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha=1, lambda=lambda_inputs)
@@ -94,26 +94,20 @@ LASSO_CV <- cv.glmnet(x=predictor_matrix_train, y=train$log_price_doc, alpha=1, 
 # Optimal lambdas
 lambda_star <- LASSO_CV$lambda.min
 lambda_star_1SE <- LASSO_CV$lambda.1se
-
 plot(LASSO_CV)
 abline(v=log(lambda_star), col="red")
 abline(v=log(lambda_star_1SE), col="blue")
-```
-
-```{r}
-y_hattrain <- predict(LASSO_fit, newx=predictor_matrix_train, s=lambda_star_1SE) %>% 
-  as.vector()
 
 #TRAIN error
-(y_hattrain - train$log_price_doc)^2 %>% 
-  mean() %>% 
-  sqrt()
 
+y_hat_train <- predict(LASSO_fit, newx=predictor_matrix_train, s=lambda_star_1SE) %>% 
+  as.vector()
+lasso_train_rmsle <- MLmetrics::RMSLE(exp(y_hat_train), train$price_doc)
+
+#Predictions
 y_hat <- predict(LASSO_fit, newx=predictor_matrix_test, s=lambda_star_1SE) %>% 
   as.vector()
 hist(y_hat)
-
-
 sample_submission$price_doc<- exp(y_hat)
 write_excel_csv(sample_submission, "submission2")
 ```
@@ -126,13 +120,20 @@ write_excel_csv(sample_submission, "submission2")
 Using the "scoring mechanism" for the Russian Housing Kaggle competition, fill
 in these cells:
 
+```{r}
+kaggle_lm <- 2.63413
+kaggle_lasso<- .42577
+Method<- c("LM", "LASSO crossvalidated")
+`Training Score` <- c(round(lm_train_rmsle,5), round(lasso_train_rmsle,5)) 
+`Kaggle Score` <- c(kaggle_lm, kaggle_lasso)
+scores <- cbind(Method, `Training Score`, `Kaggle Score`)
+kable(scores, format="markdown", caption ="Scores")
+```
 
-Method                | Training Score  | Kaggle Score
---------------------- | -------------   | -------------
-lm                    |     0.1200696   |  4.12045
-LASSO crossvalidated  |     0.5055529   |  0.45162
 
 
-The Kaggle Score for the Lm model is fairly high That's probably because we use very few observations to train our model. Naturally, the training score would be lower than the one computed from the out-of-sample test data on which the model is applied.
+# Analysis
+
+The Kaggle Score for the Lm model is unsurprisingly higher than that of the LASSO model. Apart from being less optimal than LASSO, the fact that we use very few observations to train our model probably also impacts its effectiveness. Naturally, the training score would be lower than the one computed from the out-of-sample test data on which the model is applied.
 
 The Kaggle Score for the LASSO model with a cross-validated optimal lambda is much lower, indicating that the LASSO model is much better at predicting the test data than the simple lm model.
